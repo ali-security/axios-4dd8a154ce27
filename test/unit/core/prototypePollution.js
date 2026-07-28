@@ -8,6 +8,14 @@ describe("Prototype Pollution Protection", function () {
   afterEach(function () {
     // Clean up any pollution that might have occurred
     delete Object.prototype.polluted;
+    delete Object.prototype.transport;
+    delete Object.prototype.transformRequest;
+    delete Object.prototype.transformResponse;
+    delete Object.prototype.formSerializer;
+    delete Object.prototype.env;
+    delete Object.prototype.parseReviver;
+    delete Object.prototype.headers;
+    delete Object.prototype.customObj;
   });
 
   describe("utils.merge", function () {
@@ -220,6 +228,73 @@ describe("Prototype Pollution Protection", function () {
       assert.strictEqual(
         result.headers.common["Content-Type"],
         "application/json",
+      );
+    });
+
+    it("should not inherit transport from Object.prototype", function () {
+      Object.prototype.transport = { request: function () {} };
+      const result = mergeConfig({}, { url: "/a" });
+      assert.strictEqual(result.hasOwnProperty("transport"), false);
+      assert.strictEqual(
+        Object.prototype.hasOwnProperty.call(result, "transport"),
+        false
+      );
+    });
+
+    it("should not inherit transformRequest from Object.prototype", function () {
+      Object.prototype.transformRequest = function () { return "hijacked"; };
+      const result = mergeConfig({}, { url: "/a" });
+      assert.strictEqual(
+        Object.prototype.hasOwnProperty.call(result, "transformRequest"),
+        false
+      );
+    });
+
+    it("should not inherit transformResponse from Object.prototype", function () {
+      Object.prototype.transformResponse = function () { return "hijacked"; };
+      const result = mergeConfig({}, { url: "/a" });
+      assert.strictEqual(
+        Object.prototype.hasOwnProperty.call(result, "transformResponse"),
+        false
+      );
+    });
+
+    it("should not inherit arbitrary keys from Object.prototype", function () {
+      Object.prototype.polluted = "yes";
+      const result = mergeConfig({}, { url: "/a" });
+      assert.strictEqual(
+        Object.prototype.hasOwnProperty.call(result, "polluted"),
+        false
+      );
+    });
+
+    // The tests above only assert that polluted keys never become *own*
+    // properties of the merged config. That is trivially true regardless of the
+    // fix, because mergeConfig only iterates own keys, so a prototype-only key is
+    // never visited. The tests below actually exercise the configValue guard:
+    // when config2 owns a key that config1 lacks, the unguarded merge reads
+    // `config1[prop]` off the polluted prototype and folds it into the result.
+
+    it("should not fold prototype-inherited values into a merged headers key", function () {
+      Object.prototype.headers = { polluted: "yes" };
+      // config1 has no own `headers`; config2 does.
+      const result = mergeConfig({}, { headers: { a: "1" } });
+      assert.strictEqual(result.headers.a, "1");
+      assert.strictEqual(
+        Object.prototype.hasOwnProperty.call(result.headers, "polluted"),
+        false,
+        "inherited Object.prototype.headers leaked into the merged headers"
+      );
+    });
+
+    it("should not fold prototype-inherited values into a merged deep key", function () {
+      Object.prototype.customObj = { polluted: "yes" };
+      const result = mergeConfig({}, { customObj: { safe: "value" } });
+      assert.strictEqual(result.customObj.safe, "value");
+      assert.strictEqual(
+        Object.prototype.hasOwnProperty.call(result.customObj, "polluted"),
+        false,
+        "inherited Object.prototype.customObj leaked into the merged value"
       );
     });
   });

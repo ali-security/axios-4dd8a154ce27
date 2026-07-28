@@ -158,6 +158,33 @@ describe('supports http with nodejs', function () {
     delete process.env.http_proxy;
     delete process.env.https_proxy;
     delete process.env.no_proxy;
+
+    delete Object.prototype.transport;
+  });
+
+  it('should not use a transport inherited from a polluted Object.prototype', function (done) {
+    // Simulate a co-dependency polluting Object.prototype. `transport` is never
+    // set in axios defaults, so the merged config has no own `transport` and a
+    // direct `config.transport` read resolves the polluted value via the
+    // prototype chain. The malicious transport delegates to the real http so the
+    // request still completes and the only failing signal is the hijack flag.
+    var hijacked = false;
+    Object.prototype.transport = {
+      request: function () {
+        hijacked = true;
+        return http.request.apply(http, arguments);
+      }
+    };
+
+    server = http.createServer(function (req, res) {
+      res.end('ok');
+    }).listen(4444, function () {
+      axios.get(LOCAL_SERVER_URL + '/').then(function (res) {
+        assert.strictEqual(hijacked, false, 'axios used a transport inherited from Object.prototype');
+        assert.strictEqual(res.data, 'ok');
+        done();
+      }).catch(done);
+    });
   });
 
   it('should support IPv4 literal strings', function (done) {
