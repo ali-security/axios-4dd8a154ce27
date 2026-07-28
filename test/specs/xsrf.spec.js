@@ -143,4 +143,62 @@ describe('xsrf', function () {
       });
     });
   });
+
+  describe('GHSA-xx6v-rp6x-q39c non-boolean withXSRFToken', function () {
+    afterEach(function () {
+      delete Object.prototype.withXSRFToken;
+    });
+
+    var leakCases = [
+      ['number 1', 1],
+      ['string "false"', 'false'],
+      ['empty object', {}],
+      ['empty array', []],
+    ];
+
+    leakCases.forEach(function (pair) {
+      var label = pair[0];
+      var value = pair[1];
+
+      it('should not send xsrf header cross-origin when withXSRFToken = ' + label, function (done) {
+        document.cookie = axios.defaults.xsrfCookieName + '=12345';
+        axios('http://example.com/', { withXSRFToken: value });
+        getAjaxRequest().then(function (request) {
+          expect(request.requestHeaders[axios.defaults.xsrfHeaderName]).toEqual(undefined);
+          done();
+        });
+      });
+    });
+
+    it('should not send xsrf header cross-origin when Object.prototype.withXSRFToken is polluted', function (done) {
+      Object.prototype.withXSRFToken = 1;
+      document.cookie = axios.defaults.xsrfCookieName + '=12345';
+      axios('http://example.com/');
+      getAjaxRequest().then(function (request) {
+        expect(request.requestHeaders[axios.defaults.xsrfHeaderName]).toEqual(undefined);
+        done();
+      });
+    });
+
+    it('should still send xsrf header cross-origin when withXSRFToken === true (strict)', function (done) {
+      var token = '12345';
+      document.cookie = axios.defaults.xsrfCookieName + '=' + token;
+      axios('http://example.com/', { withXSRFToken: true });
+      getAjaxRequest().then(function (request) {
+        expect(request.requestHeaders[axios.defaults.xsrfHeaderName]).toEqual(token);
+        done();
+      });
+    });
+
+    it('should still send xsrf header same-origin when withXSRFToken is undefined', function (done) {
+      var token = '12345';
+      document.cookie = axios.defaults.xsrfCookieName + '=' + token;
+      axios('/foo');
+      getAjaxRequest().then(function (request) {
+        expect(request.requestHeaders[axios.defaults.xsrfHeaderName]).toEqual(token);
+        done();
+      });
+    });
+  });
+
 });
