@@ -27,6 +27,7 @@ const config: AxiosRequestConfig = {
   url: '/user',
   method: 'get',
   baseURL: 'https://api.example.com/',
+  allowAbsoluteUrls: false,
   transformRequest: (data: any) => '{"foo":"bar"}',
   transformResponse: [
     (data: any) => ({ baz: 'qux' })
