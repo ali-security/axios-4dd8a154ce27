@@ -4,7 +4,8 @@ import getStream from "get-stream";
 import {Throttle} from "stream-throttle";
 import formidable from "formidable";
 
-export const LOCAL_SERVER_URL = 'http://localhost:4444';
+export const SERVER_PORT = 4444;
+export const LOCAL_SERVER_URL = `http://localhost:${SERVER_PORT}`;
 
 export const SERVER_HANDLER_STREAM_ECHO = (req, res) => req.pipe(res);
 
