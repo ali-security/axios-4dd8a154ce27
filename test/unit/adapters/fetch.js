@@ -10,6 +10,7 @@ import {
   makeEchoStream
 } from '../../helpers/server.js';
 import axios from '../../../index.js';
+import AxiosError from '../../../lib/core/AxiosError.js';
 import stream from "stream";
 import {AbortController} from "abortcontroller-polyfill/dist/cjs-ponyfill.js";
 import util from "util";
@@ -45,6 +46,60 @@ describe('supports fetch with nodejs', function () {
       }),
       /Invalid character in header content/
     );
+  });
+
+  it('rejects malformed HTTP URLs before fetch normalization and preserves config', async () => {
+    for (const url of ['\u0000https:example.com/users', 'h\nttp:example.com/users']) {
+      await assert.rejects(
+        () =>
+          axios.get(url, {
+            adapter: 'fetch',
+            headers: {
+              'X-Test': 'yes',
+            },
+          }),
+        (error) => {
+          assert.ok(error instanceof AxiosError);
+          assert.strictEqual(error.code, AxiosError.ERR_INVALID_URL);
+          assert.strictEqual(error.message, 'Invalid URL: missing "//" after protocol');
+          assert.strictEqual(error.config.url, url);
+          assert.strictEqual(error.config.headers.get('X-Test'), 'yes');
+          return true;
+        }
+      );
+    }
+  });
+
+  // NOTE: the reference's "should not use inherited Symbol.iterator for request
+  // headers" test is intentionally omitted here. It exercises the newer axios
+  // AxiosHeaders iterable-source protection (utils.isSafeIterable consumed by
+  // the `isObject(header) && isIterable(header)` branch of AxiosHeaders.set),
+  // which does not exist in axios 1.8.2 — that branch is absent, so the
+  // corresponding lib hunk was determined not-applicable for this version.
+
+  it('should ignore inherited nested auth fields (fetch)', async () => {
+    const testServer = await startHTTPServer((req, res) => res.end(req.headers.authorization));
+
+    Object.defineProperty(Object.prototype, 'username', {
+      value: 'inherited-user',
+      configurable: true,
+    });
+    Object.defineProperty(Object.prototype, 'password', {
+      value: 'inherited-pass',
+      configurable: true,
+    });
+
+    try {
+      const response = await fetchAxios.get(`http://localhost:${testServer.address().port}/`, {
+        auth: {},
+      });
+
+      assert.strictEqual(response.data, 'Basic Og==');
+    } finally {
+      delete Object.prototype.username;
+      delete Object.prototype.password;
+      await stopHTTPServer(testServer);
+    }
   });
 
   describe('responses', async () => {
@@ -564,6 +619,119 @@ describe('supports fetch with nodejs', function () {
           maxBodyLength: 1024,
         });
         assert.strictEqual(received, payload);
+      } finally {
+        await stopHTTPServer(server);
+      }
+    });
+
+    // GHSA-jqh4-m9w3-8hp9: a ReadableStream upload must never bypass
+    // maxBodyLength. Depending on the runtime's fetch request-stream support,
+    // the adapter either counts bytes per-chunk (ERR_BAD_REQUEST) or refuses to
+    // send an unenforceable stream (ERR_NOT_SUPPORT); either way the oversized
+    // body must be rejected and the server must not receive more than the limit.
+    const makeUploadStream = (totalBytes, chunkSize = 512) => {
+      let remaining = totalBytes;
+
+      return new ReadableStream({
+        pull(controller) {
+          if (remaining <= 0) {
+            controller.close();
+            return;
+          }
+
+          const size = Math.min(chunkSize, remaining);
+          remaining -= size;
+          controller.enqueue(new Uint8Array(size));
+        },
+      });
+    };
+
+    it('should reject a streamed outbound body that exceeds maxBodyLength during upload', async () => {
+      if (typeof ReadableStream !== 'function') {
+        return;
+      }
+
+      let bytesReceived = 0;
+      const server = await startHTTPServer(
+        (req, res) => {
+          req.on('data', (chunk) => {
+            bytesReceived += chunk.length;
+          });
+          req.on('error', () => {});
+          req.on('end', () => {
+            res.end('ok');
+          });
+        },
+        { port: SERVER_PORT }
+      );
+
+      try {
+        await assert.rejects(
+          fetchAxios.post(`${LOCAL_SERVER_URL}/`, makeUploadStream(2048), {
+            maxBodyLength: 1024,
+            headers: { 'Content-Type': 'application/octet-stream' },
+          }),
+          (err) => {
+            assert.ok(
+              err.code === 'ERR_BAD_REQUEST' || err.code === 'ERR_NOT_SUPPORT',
+              `unexpected error code ${err.code}`
+            );
+            return true;
+          }
+        );
+
+        assert.ok(
+          bytesReceived <= 1024,
+          `server should not receive more than maxBodyLength; got ${bytesReceived}`
+        );
+      } finally {
+        await stopHTTPServer(server);
+      }
+    });
+
+    it('should enforce maxBodyLength on a stream even when a smaller Content-Length is declared', async () => {
+      if (typeof ReadableStream !== 'function') {
+        return;
+      }
+
+      let bytesReceived = 0;
+      const server = await startHTTPServer(
+        (req, res) => {
+          req.on('data', (chunk) => {
+            bytesReceived += chunk.length;
+          });
+          req.on('error', () => {});
+          req.on('end', () => {
+            res.end('ok');
+          });
+        },
+        { port: SERVER_PORT }
+      );
+
+      try {
+        // A caller-declared Content-Length that under-reports the real body
+        // must not let an oversized stream slip past the limit.
+        await assert.rejects(
+          fetchAxios.post(`${LOCAL_SERVER_URL}/`, makeUploadStream(8192), {
+            maxBodyLength: 1024,
+            headers: {
+              'Content-Type': 'application/octet-stream',
+              'Content-Length': '500',
+            },
+          }),
+          (err) => {
+            assert.ok(
+              err.code === 'ERR_BAD_REQUEST' || err.code === 'ERR_NOT_SUPPORT',
+              `unexpected error code ${err.code}`
+            );
+            return true;
+          }
+        );
+
+        assert.ok(
+          bytesReceived <= 1024,
+          `server should not receive more than maxBodyLength; got ${bytesReceived}`
+        );
       } finally {
         await stopHTTPServer(server);
       }
