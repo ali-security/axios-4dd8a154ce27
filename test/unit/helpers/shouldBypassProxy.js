@@ -119,4 +119,98 @@ describe('helpers::shouldBypassProxy', () => {
     assert.strictEqual(shouldBypassProxy('http://200.127.0.1:8080/'), false);
   });
 
+  // IPv4-mapped IPv6 normalization: an attacker (or naive caller) can use the
+  // IPv4-mapped IPv6 representation of an address (e.g. ::ffff:192.168.1.5)
+  // to dodge a NO_PROXY policy expressed in IPv4 form, or vice-versa. After
+  // canonicalising both sides, equivalent addresses compare equal.
+  describe('IPv4-mapped IPv6 normalization', function () {
+    it('should bypass via IPv4-mapped IPv6 request when NO_PROXY uses the IPv4 form', function () {
+      setNoProxy('192.168.1.5');
+
+      assert.strictEqual(shouldBypassProxy('http://[::ffff:192.168.1.5]/'), true);
+    });
+
+    it('should bypass via Node-normalised IPv4-mapped hex request against an IPv4 NO_PROXY', function () {
+      // Node's URL parser canonicalises [::ffff:192.168.1.5] → [::ffff:c0a8:105].
+      // The hex form must unmap to 192.168.1.5 to match the entry.
+      setNoProxy('192.168.1.5');
+
+      assert.strictEqual(shouldBypassProxy('http://[::ffff:c0a8:105]/'), true);
+    });
+
+    it('should bypass via plain IPv4 request when NO_PROXY uses the IPv4-mapped IPv6 dotted form', function () {
+      setNoProxy('::ffff:192.168.1.5');
+
+      assert.strictEqual(shouldBypassProxy('http://192.168.1.5/'), true);
+    });
+
+    it('should bypass via plain IPv4 request when NO_PROXY uses the IPv4-mapped IPv6 hex form', function () {
+      setNoProxy('::ffff:a00:1');
+
+      assert.strictEqual(shouldBypassProxy('http://10.0.0.1/'), true);
+    });
+
+    it('should bypass via plain IPv4 request when NO_PROXY uses a bracketed IPv4-mapped IPv6 entry', function () {
+      setNoProxy('[::ffff:192.168.1.5]');
+
+      assert.strictEqual(shouldBypassProxy('http://192.168.1.5/'), true);
+    });
+
+    it('should treat the uncompressed 0:0:0:0:0:ffff:<v4> form as equivalent', function () {
+      setNoProxy('0:0:0:0:0:ffff:10.0.0.1');
+
+      assert.strictEqual(shouldBypassProxy('http://10.0.0.1/'), true);
+      assert.strictEqual(shouldBypassProxy('http://[::ffff:10.0.0.1]/'), true);
+    });
+
+    it('should treat compressed zero-prefix IPv4-mapped IPv6 dotted forms as equivalent', function () {
+      for (const entry of [
+        '0::ffff:192.168.1.5',
+        '0:0::ffff:192.168.1.5',
+        '0:0:0::ffff:192.168.1.5',
+        '0:0:0:0::ffff:192.168.1.5',
+      ]) {
+        setNoProxy(entry);
+
+        assert.strictEqual(shouldBypassProxy('http://192.168.1.5/'), true);
+      }
+    });
+
+    it('should treat compressed zero-prefix IPv4-mapped IPv6 hex forms as equivalent', function () {
+      for (const entry of [
+        '0::ffff:c0a8:105',
+        '0:0::ffff:c0a8:105',
+        '0:0:0::ffff:c0a8:105',
+        '0:0:0:0::ffff:c0a8:105',
+      ]) {
+        setNoProxy(entry);
+
+        assert.strictEqual(shouldBypassProxy('http://192.168.1.5/'), true);
+      }
+    });
+
+    it('should support compressed bracketed IPv4-mapped IPv6 entries with explicit ports', function () {
+      setNoProxy('[0:0::ffff:192.168.1.5]:8080');
+
+      assert.strictEqual(shouldBypassProxy('http://192.168.1.5:8080/'), true);
+      assert.strictEqual(shouldBypassProxy('http://192.168.1.5:9090/'), false);
+    });
+
+    it('should NOT cross-match unrelated addresses', function () {
+      setNoProxy('192.168.1.5');
+
+      // Different IPv4 address inside an IPv4-mapped form must not bypass.
+      assert.strictEqual(shouldBypassProxy('http://[::ffff:192.168.1.6]/'), false);
+      // Non-mapped IPv6 must not be treated as IPv4.
+      assert.strictEqual(shouldBypassProxy('http://[2001:db8::1]/'), false);
+    });
+
+    it('should leave non-mapped IPv6 addresses comparing as IPv6', function () {
+      setNoProxy('2001:db8::1');
+
+      assert.strictEqual(shouldBypassProxy('http://[2001:db8::1]/'), true);
+      assert.strictEqual(shouldBypassProxy('http://[2001:db8::2]/'), false);
+    });
+  });
+
 });
