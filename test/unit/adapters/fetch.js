@@ -35,6 +35,17 @@ describe('supports fetch with nodejs', function () {
     server = null;
   });
 
+  it('should reject request headers containing CRLF characters', async function () {
+    await assert.rejects(
+      fetchAxios.get('/', {
+        headers: {
+          'x-test': 'ok\r\nInjected: yes'
+        }
+      }),
+      /Invalid character in header content/
+    );
+  });
+
   describe('responses', async () => {
     it(`should support text response type`, async () => {
       const originalData = 'my data';

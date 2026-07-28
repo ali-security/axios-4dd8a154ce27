@@ -31,6 +31,20 @@ describe('headers', function () {
     jasmine.Ajax.uninstall();
   });
 
+  it('should reject request headers containing CRLF characters', function (done) {
+    axios('/foo', {
+      headers: {
+        'x-test': 'ok\r\nInjected: yes'
+      }
+    }).then(function () {
+      done(new Error('request should have been rejected'));
+    }).catch(function (err) {
+      expect(err.message).toMatch(/Invalid character in header content/);
+      expect(jasmine.Ajax.requests.count()).toBe(0);
+      done();
+    });
+  });
+
   it('should default common headers', function (done) {
     const headers = axios.defaults.headers.common;
 

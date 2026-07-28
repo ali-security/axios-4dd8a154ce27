@@ -227,6 +227,17 @@ describe('supports http with nodejs', function () {
     });
   });
 
+  it('should reject request headers containing CRLF characters', async function () {
+    await assert.rejects(
+      axios.get('http://localhost:1/', {
+        headers: {
+          'x-test': 'ok\r\nInjected: yes'
+        }
+      }),
+      /Invalid character in header content/
+    );
+  });
+
   it('should parse the timeout property', function (done) {
 
     server = http.createServer(function (req, res) {
@@ -1290,7 +1301,7 @@ describe('supports http with nodejs', function () {
         proxyRequests += 1;
         response.end('proxied');
       },
-      { port: PROXY_PORT }
+      { port: 4000 }
     );
 
     const noProxyValue = 'localhost,127.0.0.1,::1';
@@ -1344,7 +1355,7 @@ describe('supports http with nodejs', function () {
         proxyRequests += 1;
         response.end('proxied');
       },
-      { port: PROXY_PORT }
+      { port: 4000 }
     );
 
     const noProxyValue = 'localhost,127.0.0.1,::1';
